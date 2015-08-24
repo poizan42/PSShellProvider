@@ -2,4 +2,9 @@
 *.csproj.user
 bin
 obj
+Debug
 /.vs
+*.opensdf
+/*.sdf
+/GetConsts
+ipch

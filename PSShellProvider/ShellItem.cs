@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace PSShellProvider
 {
-    public class ShellItem
+    public class ShellItem : IDisposable
     {
         [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
         private static extern int SHCreateItemFromIDList(
@@ -26,10 +26,13 @@ namespace PSShellProvider
             out IdList pidl);
 
         private IShellItem nativeItem;
+        private Lazy<IdList> _pidl;
+        private SFGAO _loadedAttrs;
+        private SFGAO _attrs;
 
-        public IdList Pidl
+        private void Init()
         {
-            get
+            _pidl = new Lazy<IdList>(() =>
             {
                 IdList pidl;
                 int hr = SHGetIDListFromObject(nativeItem, out pidl);
@@ -38,19 +41,81 @@ namespace PSShellProvider
                 if (hr != 0)
                     Marshal.ThrowExceptionForHR(hr);
                 return pidl;
-            }
+            });
         }
 
-        internal ShellItem(IShellItem nativeItem)
+        public IdList Pidl { get { return _pidl.Value; } }
+
+        public SFGAO GetAttributes(SFGAO attributes)
+        {
+            _attrs = LoadMissingAttributes(nativeItem, _loadedAttrs, _attrs, attributes);
+            _loadedAttrs = _loadedAttrs | attributes;
+            return _attrs;
+        }
+
+        internal ShellItem(IShellItem nativeItem, SFGAO loadedAttrs, SFGAO attrs)
         {
             this.nativeItem = nativeItem;
+            _loadedAttrs = loadedAttrs;
+            _attrs = attrs;
+            Init();
         }
-
-        public ShellItem(IdList pidl)
+        
+        internal ShellItem(IdList pidl, SFGAO loadedAttrs, SFGAO attrs)
         {
             int hr = SHCreateItemFromIDList(pidl, typeof(IShellItem).GUID, out nativeItem);
             if (hr != 0)
                 Marshal.ThrowExceptionForHR(hr);
+            Init();
+        }
+
+        private static SFGAO LoadMissingAttributes(IShellItem nativeItem, SFGAO loadedAttrs, SFGAO curAttrs, SFGAO requestedAttrs)
+        {
+            SFGAO unloadedAttributes = requestedAttrs & (~loadedAttrs);
+            if (unloadedAttributes != SFGAO.None)
+            {
+                SFGAO newAttributes;
+                nativeItem.GetAttributes(unloadedAttributes, out newAttributes);
+                curAttrs |= newAttributes;
+            }
+            return curAttrs;
+        }
+
+        internal static ShellItem GetShellItem(IdList pidl, SFGAO loadedAttrs, SFGAO attrs)
+        {
+            IShellItem nativeItem;
+            int hr = SHCreateItemFromIDList(pidl, typeof(IShellItem).GUID, out nativeItem);
+            if (hr != 0)
+                Marshal.ThrowExceptionForHR(hr);
+            attrs = LoadMissingAttributes(nativeItem, loadedAttrs, attrs, SFGAO.Browsable | SFGAO.Folder);
+            loadedAttrs |= SFGAO.Browsable | SFGAO.Folder;
+            if ((attrs & (SFGAO.Browsable | SFGAO.Folder)) != SFGAO.None)
+                return new ShellFolder(nativeItem, null, loadedAttrs, attrs);
+            else
+                return new ShellItem(nativeItem, loadedAttrs, attrs);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (nativeItem != null)
+                {
+                    Marshal.ReleaseComObject(nativeItem);
+                    nativeItem = null;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        ~ShellItem()
+        {
+            Dispose(false);
         }
     }
 }

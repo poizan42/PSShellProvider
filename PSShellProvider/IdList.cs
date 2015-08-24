@@ -101,14 +101,14 @@ namespace PSShellProvider
         }
 
         [DllImport("Shell32", CharSet = CharSet.Unicode), SuppressUnmanagedCodeSecurity]
-        private static extern int SHParseDisplayName(string name, IntPtr pbc, out IntPtr ppidl, int sfgaoIn, IntPtr psfgaoOut);
+        private static extern int SHParseDisplayName(string name, IntPtr pbc, out IntPtr ppidl, SFGAO sfgaoIn, out SFGAO psfgaoOut);
 
-        public static IdList Parse(string displayName)
+        public static IdList Parse(string displayName, SFGAO queryForAttributes, out SFGAO attributes)
         {
             IntPtr pidl = IntPtr.Zero;
             try
             {
-                int hr = SHParseDisplayName(displayName, IntPtr.Zero, out pidl, 0, IntPtr.Zero);
+                int hr = SHParseDisplayName(displayName, IntPtr.Zero, out pidl, queryForAttributes, out attributes);
                 if (hr != 0)
                     Marshal.ThrowExceptionForHR(hr);
                 return new IdList(pidl);
@@ -118,6 +118,12 @@ namespace PSShellProvider
                 if (pidl != IntPtr.Zero)
                     Marshal.FreeCoTaskMem((IntPtr)pidl);
             }
+        }
+
+        public static IdList Parse(string displayName)
+        {
+            SFGAO dummy;
+            return Parse(displayName, SFGAO.None, out dummy);
         }
     }
 }
