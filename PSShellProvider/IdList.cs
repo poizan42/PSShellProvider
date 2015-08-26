@@ -42,14 +42,14 @@ namespace PSShellProvider
             if (ManagedObj == null)
                 return IntPtr.Zero;
             IdList pidl = (IdList)ManagedObj;
-            int len = pidl.Parts.Sum(id => id.Length + 2) + 2;
+            int len = pidl.Parts.Sum(id => id.Value.Length + 2) + 2;
             IntPtr nativePidl = Marshal.AllocCoTaskMem(len);
             IntPtr pos = nativePidl;
-            foreach (byte[] id in pidl.Parts)
+            foreach (var id in pidl.Parts)
             {
-                *(ushort*)pos = checked((ushort)(id.Length + sizeof(ushort)));
-                Marshal.Copy(id, 0, pos + sizeof(ushort), id.Length);
-                pos += id.Length + sizeof(ushort);
+                *(ushort*)pos = checked((ushort)(id.Value.Length + sizeof(ushort)));
+                Marshal.Copy(id.Value, 0, pos + sizeof(ushort), id.Value.Length);
+                pos += id.Value.Length + sizeof(ushort);
             }
             *(ushort*)pos = 0;
             return nativePidl;
@@ -65,7 +65,17 @@ namespace PSShellProvider
 
     public class IdList
     {
-        public IList<byte[]> Parts { get; private set; }
+        public IList<ShellItemId> Parts { get; private set; }
+
+        public IdList (IEnumerable<ShellItemId> parts)
+        {
+            Parts = parts.ToList().AsReadOnly();
+        }
+
+        public IdList (ShellItemId relativeId)
+            : this(new ShellItemId[] { relativeId })
+        {
+        }
 
         public unsafe IdList(byte[] pidl)
         {
@@ -80,7 +90,7 @@ namespace PSShellProvider
 
         private unsafe void Load(IntPtr pidl)
         {
-            var parts = new List<byte[]>();
+            var parts = new List<ShellItemId>();
             IntPtr cur = pidl;
             while (true)
             {
@@ -90,40 +100,39 @@ namespace PSShellProvider
                 byte[] item = new byte[cb];
                 Marshal.Copy(cur + sizeof(ushort), item, 0, cb - sizeof(ushort));
                 cur += cb;
-                parts.Add(item);
+                parts.Add(new ShellItemId(item));
             }
             Parts = parts.AsReadOnly();
         }
        
         public override string ToString()
         {
-            return String.Join("\\", Parts.Select(id => Utils.ByteArrayToHex(id)));
+            return String.Join("\\", Parts);
         }
-
-        [DllImport("Shell32", CharSet = CharSet.Unicode), SuppressUnmanagedCodeSecurity]
-        private static extern int SHParseDisplayName(string name, IntPtr pbc, out IntPtr ppidl, SFGAO sfgaoIn, out SFGAO psfgaoOut);
 
         public static IdList Parse(string displayName, SFGAO queryForAttributes, out SFGAO attributes)
         {
-            IntPtr pidl = IntPtr.Zero;
-            try
-            {
-                int hr = SHParseDisplayName(displayName, IntPtr.Zero, out pidl, queryForAttributes, out attributes);
-                if (hr != 0)
-                    Marshal.ThrowExceptionForHR(hr);
-                return new IdList(pidl);
-            }
-            finally
-            {
-                if (pidl != IntPtr.Zero)
-                    Marshal.FreeCoTaskMem((IntPtr)pidl);
-            }
+            return ShellNativeFunctions.SHParseDisplayName(displayName, null, queryForAttributes, out attributes);
         }
 
         public static IdList Parse(string displayName)
         {
             SFGAO dummy;
             return Parse(displayName, SFGAO.None, out dummy);
+        }
+
+        public bool AbsolutePidlEquals(IdList other)
+        {
+            if (Parts.Count == other.Parts.Count)
+            {
+                Parts.Zip(other.Parts, (a,b) => a.Equals(b));
+            }
+            int hr = ShellFolder.DesktopFolder.NativeFolder.CompareIDs(0, this, other);
+            bool isError = ((uint)(hr)) >> 31 == 1;
+            if (isError)
+                Marshal.ThrowExceptionForHR(hr);
+            int code = unchecked((int)(((uint)hr) & 0xFFFF));
+            return code == 0;
         }
     }
 }

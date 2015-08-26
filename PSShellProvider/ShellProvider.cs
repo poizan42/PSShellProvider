@@ -42,7 +42,11 @@ namespace PSShellProvider
                 return null;
             }
 
-            return new ShellPSDriveInfo((ShellFolder)ShellItem.GetShellItem(pidl, isContainerQuery, attributes), drive);
+            return new ShellPSDriveInfo((ShellFolder)ShellItem.GetShellItem(pidl, new ShellItem.ShellItemKnownInfo()
+            {
+                LoadedAttributes = isContainerQuery,
+                Attributes = attributes
+            }), drive);
         }
 
         protected override PSDriveInfo RemoveDrive(PSDriveInfo drive)
@@ -66,11 +70,15 @@ namespace PSShellProvider
             return drive;
         }
 
-        protected override void GetItem(string path)
+       private ShellItem GetItemCore(string path)
         {
             IdList pidl = GetPidlFromPath(path);
-            ShellItem obj = ShellItem.GetShellItem(pidl, SFGAO.None, SFGAO.None);
-            WriteItemObject(obj, path == "" ? "\\" : path, false);
+            return ShellItem.GetShellItem(pidl, new ShellItem.ShellItemKnownInfo());
+        }
+
+        protected override void GetItem(string path)
+        {
+            WriteItemObject(GetItemCore(path), path == "" ? "\\" : path, false);
         }
 
         protected override bool ItemExists(string path)
@@ -94,6 +102,26 @@ namespace PSShellProvider
             return (attributes & isContainerQuery) != SFGAO.None;
         }
 
+        protected override void GetChildItems(string path, bool recurse)
+        {
+            ShellItem item = GetItemCore(path);
+            ShellFolder folder = item as ShellFolder;
+            if (folder == null)
+            {
+                WriteItemObject(item, path, false);
+                return;
+            }
+            foreach (var child in folder.GetChildItems())
+            {
+                WriteItemObject(child, child.ParsePath, child is ShellFolder);
+            }
+        }
+
+        protected override string GetParentPath(string path, string root)
+        {
+            return base.GetParentPath(path, root);
+        }
+
         private IdList GetPidlFromPath(string path)
         {
             SFGAO dummy;
@@ -102,7 +130,14 @@ namespace PSShellProvider
 
         private IdList GetPidlFromPath(string path, SFGAO queryForAttributes, out SFGAO attributes)
         {
-            return IdList.Parse(path.TrimEnd('\\'), queryForAttributes, out attributes);
+            path = path.TrimEnd('\\');
+            if (path == "")
+            {
+                ShellFolder desktopFolder = ShellFolder.DesktopFolder;
+                attributes = desktopFolder.GetAttributes(queryForAttributes);
+                return desktopFolder.Pidl;
+            }
+            return IdList.Parse(path, queryForAttributes, out attributes);
         }
 
     }

@@ -13,18 +13,34 @@ namespace PSShellProvider
     [Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe")]
     internal interface IShellItem
     {
-        void BindToHandler(IBindCtx pbc,
+        [return: MarshalAs(UnmanagedType.IUnknown)]
+        object BindToHandler(IBindCtx pbc,
             [MarshalAs(UnmanagedType.LPStruct)]Guid bhid,
-            [MarshalAs(UnmanagedType.LPStruct)]Guid riid,
-            [MarshalAs(UnmanagedType.IUnknown)]
-            out object ppv);
+            [MarshalAs(UnmanagedType.LPStruct)]Guid riid);
+        [PreserveSig]
+        int _GetParent(
+            [MarshalAs(UnmanagedType.Interface)]
+            out IShellItem parent);
 
-        void GetParent(out IShellItem ppsi);
-
-        void GetDisplayName(SIGDN sigdnName, out IntPtr ppszName);
+        [return: MarshalAs(UnmanagedType.LPWStr)] 
+        string GetDisplayName(SIGDN sigdnName);
 
         void GetAttributes(SFGAO sfgaoMask, out SFGAO psfgaoAttribs);
 
         void Compare(IShellItem psi, uint hint, out int piOrder);
     };
+
+    internal static class IShellItemExtensions
+    {
+        public static IShellItem GetParent(this IShellItem shellItem)
+        {
+            IShellItem parent;
+            int hr = shellItem._GetParent(out parent);
+            if (hr == ShellConsts.MK_E_NOOBJECT)
+                return null;
+            else if (hr != ShellConsts.S_OK)
+                Marshal.ThrowExceptionForHR(hr);
+            return parent;
+        }
+    }
 }

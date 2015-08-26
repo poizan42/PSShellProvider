@@ -8,10 +8,48 @@ using System.Threading.Tasks;
 
 namespace PSShellProvider
 {
-    class StrRet
+    internal unsafe struct StrRetNative
+    {
+        public enum StrRetType {
+            WStr	= 0,
+            Offset	= 0x1,
+            CStr	= 0x2
+        }
+        public StrRetType uType;
+        public fixed byte cStr[260];
+    }
+
+    internal class StrRet
     {
         private string value;
         private int offset;
+
+        public unsafe StrRet(StrRetNative value)
+        {
+            IntPtr dataStart = (IntPtr)(&value.cStr[0]);
+            switch (value.uType)
+            {
+                case StrRetNative.StrRetType.CStr:
+                    this.value = Marshal.PtrToStringAnsi(dataStart, 260); //MAX_PATH
+                    return;
+                case StrRetNative.StrRetType.WStr:
+                    IntPtr strAddr = *(IntPtr*)(dataStart + sizeof(IntPtr) - sizeof(int));
+                    try
+                    {
+                        this.value = Marshal.PtrToStringUni(strAddr);
+                        return;
+                    }
+                    finally
+                    {
+                        Marshal.FreeCoTaskMem(strAddr);
+                    }
+                case StrRetNative.StrRetType.Offset:
+                    offset = *(int*)dataStart;
+                    return;
+                default:
+                    throw new ArgumentException(String.Format("Invalid type of StrRet: {0}", (int)value.uType), "pNativeData");
+            }
+        }
 
         public StrRet(string value)
         {
@@ -31,7 +69,7 @@ namespace PSShellProvider
             int idx = 0;
             while (curOffset < offset)
             {
-                byte[] curId = list.Parts[idx];
+                byte[] curId = list.Parts[idx].Value;
                 if (curOffset + 2 + curId.Length > offset)
                 {
                     return GetValueFrom(list, idx, offset-curOffset);
@@ -50,7 +88,7 @@ namespace PSShellProvider
             List<byte> ansiStr = new List<byte>();
             while (true)
             {
-                byte[] curId = list.Parts[idIdx];
+                byte[] curId = list.Parts[idIdx].Value;
                 byte[] cb = BitConverter.GetBytes((ushort)(curId.Length + sizeof(ushort)));
                 for (; innerOffset < curId.Length; innerOffset++)
                 {
@@ -70,65 +108,6 @@ namespace PSShellProvider
                 }
                 innerOffset = -2;
                 idIdx++;
-            }
-        }
-    }
-
-    class StrRetMarshaler : ICustomMarshaler
-    {
-        private enum StrRetType {
-            WStr	= 0,
-            Offset	= 0x1,
-            CStr	= 0x2
-        }
-
-        public static ICustomMarshaler GetInstance(string cookie)
-        {
-            return new StrRetMarshaler();
-        }
-
-        public void CleanUpManagedData(object ManagedObj)
-        {
-        }
-
-        public void CleanUpNativeData(IntPtr pNativeData)
-        {
-        }
-
-        public int GetNativeDataSize()
-        {
-            throw new NotImplementedException();
-        }
-
-        public IntPtr MarshalManagedToNative(object ManagedObj)
-        {
-            throw new NotImplementedException();
-        }
-
-        public unsafe object MarshalNativeToManaged(IntPtr pNativeData)
-        {
-            if (pNativeData == IntPtr.Zero)
-                return null;
-            var type = *((StrRetType*)pNativeData);
-            IntPtr dataStart = pNativeData + sizeof(StrRetType);
-            switch (type)
-            {
-                case StrRetType.CStr:
-                    return new StrRet(Marshal.PtrToStringAnsi(dataStart, 260)); //MAX_PATH
-                case StrRetType.WStr:
-                    IntPtr strAddr = *(IntPtr*)dataStart;
-                    try
-                    {
-                        return new StrRet(Marshal.PtrToStringUni(strAddr));
-                    }
-                    finally
-                    {
-                        Marshal.FreeCoTaskMem(strAddr);
-                    }
-                case StrRetType.Offset:
-                    return new StrRet(*(int*)dataStart);
-                default:
-                    throw new ArgumentException(String.Format("Invalid type of StrRet: {0}", (int)type), "pNativeData");
             }
         }
     }

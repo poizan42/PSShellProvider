@@ -1,50 +1,103 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
+using static PSShellProvider.ShellNativeFunctions;
 
 namespace PSShellProvider
 {
     public class ShellItem : IDisposable
     {
-        [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
-        private static extern int SHCreateItemFromIDList(
-            [MarshalAs(UnmanagedType.CustomMarshaler, MarshalTypeRef = typeof(IdListMarshaler))]
-            IdList pidl,
-            [MarshalAs(UnmanagedType.LPStruct)]
-            Guid riid,
-            [MarshalAs(UnmanagedType.Interface)]
-            out IShellItem v);
-
-        [DllImport("Shell32.dll", CharSet = CharSet.Unicode)]
-        private static extern int SHGetIDListFromObject(
-            [MarshalAs(UnmanagedType.IUnknown)]
-            object obj,
-            [MarshalAs(UnmanagedType.CustomMarshaler, MarshalTypeRef = typeof(IdListMarshaler))]
-            out IdList pidl);
+        internal class ShellItemKnownInfo
+        {
+            public SFGAO LoadedAttributes { get; set; }
+            public SFGAO Attributes { get; set; }
+            public string ParentParsePath { get; set; }
+            public ShellFolder ParentFolder { get; set; }
+        }
 
         private IShellItem nativeItem;
         private Lazy<IdList> _pidl;
+        private Lazy<string> _parseName, _parsePath, _desktopAbsoluteParsePath, _fullParsePath, _displayName;
+        private Lazy<ShellFolder> _parentFolder;
+        private string _parentParsePath;
         private SFGAO _loadedAttrs;
         private SFGAO _attrs;
 
-        private void Init()
+        private void Init(ShellItemKnownInfo knownInfo)
         {
-            _pidl = new Lazy<IdList>(() =>
+            _loadedAttrs = knownInfo.LoadedAttributes;
+            _attrs = knownInfo.Attributes;
+            _parentParsePath = knownInfo.ParentParsePath;
+
+            _pidl = new Lazy<IdList>(() => SHGetIDListFromObject(nativeItem));
+            _parentFolder = new Lazy<ShellFolder>(() =>
             {
-                IdList pidl;
-                int hr = SHGetIDListFromObject(nativeItem, out pidl);
-                if (hr == ShellConsts.E_NOINTERFACE)
+                var nativeParent = nativeItem.GetParent();
+                if (nativeParent == null)
                     return null;
-                if (hr != 0)
-                    Marshal.ThrowExceptionForHR(hr);
-                return pidl;
+                return new ShellFolder(nativeParent, null, new ShellItemKnownInfo());
             });
+            _desktopAbsoluteParsePath = new Lazy<string>(() => nativeItem.GetDisplayName(SIGDN.DesktopAbsoluteParsing));
+            _parseName = new Lazy<string>(() => nativeItem.GetDisplayName(SIGDN.ParentRelativeParsing));
+            _parsePath = new Lazy<string>(() =>
+            {
+                if (Pidl.Parts.Count == 0) // The actual desktop
+                    return "";
+                try
+                {
+                    if (_parentParsePath != null)
+                    {
+                        string normParentPath = _parentParsePath.Trim('\\');
+                        if (normParentPath != "")
+                            normParentPath += "\\";
+                        return normParentPath + ParseName;
+                    }
+                    else
+                        return DesktopAbsoluteParsePath;
+                }
+                catch (ArgumentException)
+                {
+                    IdList childPidl = new IdList(Pidl.Parts[Pidl.Parts.Count - 1]);
+                    return GetParentFolder().NativeFolder.GetDisplayNameOf(childPidl, SHGDNF.ForParsing);
+                }
+            });
+            _fullParsePath = new Lazy<string>(() =>
+            {
+                if (GetParentFolder() == null)
+                    return "";
+                string parentParsePath = GetParentFolder().FullParsePath.TrimEnd('\\');
+                if (parentParsePath != "")
+                    parentParsePath += "\\";
+                return parentParsePath + nativeItem.GetDisplayName(SIGDN.ParentRelativeParsing);
+            });
+            /*_displayName = new Lazy<string>(() => GetParentFolder().NativeFolder.GetDisplayNameOf(
+                new IdList(Pidl.Parts[Pidl.Parts.Count - 1]),
+                SHGDNF.InFolder | SHGDNF.Normal));*/
+            _displayName = new Lazy<string>(() => nativeItem.GetDisplayName(SIGDN.NormalDisplay));
         }
 
         public IdList Pidl { get { return _pidl.Value; } }
+        /// <summary>
+        /// The display name for parsing for this entry.
+        /// </summary>
+        public string ParseName { get { return _parseName.Value; } }
+        /// <summary>
+        /// This is *a* parse path, it may not be "canonical" in one sense or another
+        /// </summary>
+        public string ParsePath { get { return _parsePath.Value; } }
+        /// <summary>
+        /// This is specifically the desktop absolute parse path
+        /// </summary>
+        public string DesktopAbsoluteParsePath { get { return _desktopAbsoluteParsePath.Value; } }
+        /// <summary>
+        /// This is the parse path we get by explicitly querying every folder up to the root and concatenating their paths.
+        /// </summary>
+        public string FullParsePath { get { return _fullParsePath.Value; } }
+        public string DisplayName { get { return _displayName.Value; } }
+
+        public ShellFolder GetParentFolder()
+        {
+            return _parentFolder.Value;
+        }
 
         public SFGAO GetAttributes(SFGAO attributes)
         {
@@ -53,20 +106,16 @@ namespace PSShellProvider
             return _attrs;
         }
 
-        internal ShellItem(IShellItem nativeItem, SFGAO loadedAttrs, SFGAO attrs)
+        internal ShellItem(IShellItem nativeItem, ShellItemKnownInfo knownInfo)
         {
             this.nativeItem = nativeItem;
-            _loadedAttrs = loadedAttrs;
-            _attrs = attrs;
-            Init();
+            Init(knownInfo);
         }
         
-        internal ShellItem(IdList pidl, SFGAO loadedAttrs, SFGAO attrs)
+        internal ShellItem(IdList pidl, ShellItemKnownInfo knownInfo)
         {
-            int hr = SHCreateItemFromIDList(pidl, typeof(IShellItem).GUID, out nativeItem);
-            if (hr != 0)
-                Marshal.ThrowExceptionForHR(hr);
-            Init();
+            nativeItem = SHCreateItemFromIDList<IShellItem>(pidl);
+            Init(knownInfo);
         }
 
         private static SFGAO LoadMissingAttributes(IShellItem nativeItem, SFGAO loadedAttrs, SFGAO curAttrs, SFGAO requestedAttrs)
@@ -81,18 +130,21 @@ namespace PSShellProvider
             return curAttrs;
         }
 
-        internal static ShellItem GetShellItem(IdList pidl, SFGAO loadedAttrs, SFGAO attrs)
+        public static ShellItem GetShellItem(IdList pidl)
         {
-            IShellItem nativeItem;
-            int hr = SHCreateItemFromIDList(pidl, typeof(IShellItem).GUID, out nativeItem);
-            if (hr != 0)
-                Marshal.ThrowExceptionForHR(hr);
-            attrs = LoadMissingAttributes(nativeItem, loadedAttrs, attrs, SFGAO.Browsable | SFGAO.Folder);
-            loadedAttrs |= SFGAO.Browsable | SFGAO.Folder;
-            if ((attrs & (SFGAO.Browsable | SFGAO.Folder)) != SFGAO.None)
-                return new ShellFolder(nativeItem, null, loadedAttrs, attrs);
+            if (pidl.Parts.Count == 0)
+                return ShellFolder.DesktopFolder;
+            return GetShellItem(pidl, new ShellItemKnownInfo());
+        }
+        internal static ShellItem GetShellItem(IdList pidl, ShellItemKnownInfo knownInfo)
+        {
+            IShellItem nativeItem = SHCreateItemFromIDList<IShellItem>(pidl);
+            knownInfo.Attributes = LoadMissingAttributes(nativeItem, knownInfo.LoadedAttributes, knownInfo.Attributes, SFGAO.Browsable | SFGAO.Folder);
+            knownInfo.LoadedAttributes |= SFGAO.Browsable | SFGAO.Folder;
+            if ((knownInfo.Attributes & (SFGAO.Browsable | SFGAO.Folder)) != SFGAO.None)
+                return new ShellFolder(nativeItem, null, knownInfo);
             else
-                return new ShellItem(nativeItem, loadedAttrs, attrs);
+                return new ShellItem(nativeItem, knownInfo);
         }
 
         protected virtual void Dispose(bool disposing)

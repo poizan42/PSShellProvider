@@ -47,11 +47,14 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="IdList.cs" />
+    <Compile Include="IEnumIDList.cs" />
     <Compile Include="IShellFolder.cs" />
     <Compile Include="IShellItem.cs" />
     <Compile Include="ShellConsts.cs" />
     <Compile Include="ShellFolder.cs" />
     <Compile Include="ShellItem.cs" />
+    <Compile Include="ShellItemId.cs" />
+    <Compile Include="ShellNativeFunctions.cs" />
     <Compile Include="ShellProvider.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ShellPSDriveInfo.cs" />
